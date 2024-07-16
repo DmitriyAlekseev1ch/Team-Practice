@@ -1,0 +1,341 @@
+import tkinter as tk
+from tkinter import messagebox
+import datetime
+import json
+import os
+import sys
+
+class User:
+    def __init__(self, username, password, preferences=None):
+        self.username = username
+        self.password = password
+        self.preferences = preferences if preferences else {}
+        self.order_history = []
+        self.current_orders = []
+
+    def add_order(self, order):
+        self.current_orders.append(order)
+
+    def complete_order(self, order):
+        self.current_orders.remove(order)
+        self.order_history.append(order)
+
+
+class Ticket:
+    def __init__(self, train_number, car, seat, price, travel_date):
+        self.train_number = train_number
+        self.car = car
+        self.seat = seat
+        self.price = price
+        self.travel_date = travel_date
+
+
+class Order:
+    def __init__(self, user, tickets):
+        self.user = user
+        self.tickets = tickets
+        self.order_date = datetime.datetime.now()
+        self.completed = False
+
+    def complete_order(self):
+        self.completed = True
+
+
+class RailwaySystem:
+    def __init__(self):
+        self.users = []
+        self.trains = {}
+        self.logged_in_user = None
+
+    def register_user(self, username, password, preferences=None):
+        new_user = User(username, password, preferences)
+        self.users.append(new_user)
+        self.save_user_data()
+        return new_user
+
+    def save_user_data(self):
+        with open("users.json", "w") as f:
+            user_data = [{"username": user.username, "password": user.password} for user in self.users]
+            json.dump(user_data, f)
+
+    def load_user_data(self):
+        try:
+            with open("users.json", "r") as f:
+                user_data = json.load(f)
+                self.users = [User(data["username"], data["password"]) for data in user_data]
+        except FileNotFoundError:
+            pass
+
+    def add_train(self, train_number, cars):
+        self.trains[train_number] = {"cars": cars}
+
+    def create_train(self, train_number, num_cars, seats_per_car):
+        cars = {str(car + 1): [str(seat + 1) for seat in range(seats_per_car)] for car in range(num_cars)}
+        self.add_train(train_number, cars)
+
+    def find_tickets(self, user, train_number, car, seat_numbers):
+        if train_number in self.trains:
+            available_cars = self.trains[train_number]["cars"]
+            if car in available_cars:
+                available_seats = available_cars[car]
+                selected_seats = []
+                for seat_number in seat_numbers:
+                    if seat_number in available_seats:
+                        selected_seats.append(seat_number)
+                    else:
+                        return None  # One of the seats is not available
+
+                price = 100 * len(selected_seats)  # Example price calculation
+                tickets = [Ticket(train_number, car, seat, price, datetime.date.today()) for seat in selected_seats]
+                order = Order(user, tickets)
+                user.add_order(order)
+                for seat in selected_seats:
+                    available_seats.remove(seat)
+                return order
+        return None
+
+    def get_booked_tickets(self, train_number):
+        if train_number in self.trains:
+            booked_tickets = []
+            for car, seats in self.trains[train_number]["cars"].items():
+                for seat in seats:
+                    booked_tickets.append(f"Car {car}, Seat {seat}")
+            return booked_tickets
+        return []
+
+
+class Application(tk.Tk):
+    def __init__(self, railway_system):
+        super().__init__()
+        self.railway_system = railway_system
+        self.title("Укрзалізниця")
+        self.geometry("600x600")
+        self.create_widgets()
+        self.railway_system.load_user_data()
+        self.check_logged_in()
+
+    def create_widgets(self):
+        self.lbl_logged_in_as = tk.Label(self, text="", font=("Helvetica", 10, "bold"))
+        self.lbl_logged_in_as.place(x=450, y=10)
+
+        self.btn_logout = tk.Button(self, text="Logout", command=self.logout)
+        self.btn_logout.place(x=450, y=40)
+        self.btn_logout.place_forget()
+
+        self.btn_profile = tk.Button(self, text="Profile", command=self.show_profile)
+        self.btn_profile.place(x=450, y=70)
+        self.btn_profile.place_forget()
+
+        self.lbl_username = tk.Label(self, text="Username:")
+        self.lbl_username.pack()
+
+        self.entry_username = tk.Entry(self)
+        self.entry_username.pack()
+
+        self.lbl_password = tk.Label(self, text="Password:")
+        self.lbl_password.pack()
+
+        self.entry_password = tk.Entry(self, show="*")
+        self.entry_password.pack()
+
+        self.btn_login = tk.Button(self, text="Login", command=self.login)
+        self.btn_login.pack()
+
+        self.btn_register = tk.Button(self, text="Register", command=self.register)
+        self.btn_register.pack()
+
+        self.lbl_train_number = tk.Label(self, text="Train Number:")
+        self.lbl_train_number.pack()
+
+        self.entry_train_number = tk.Entry(self)
+        self.entry_train_number.pack()
+
+        self.lbl_car = tk.Label(self, text="Car Number:")
+        self.lbl_car.pack()
+
+        self.entry_car = tk.Entry(self)
+        self.entry_car.pack()
+
+        self.lbl_seat_numbers = tk.Label(self, text="Seat Numbers (comma separated):")
+        self.lbl_seat_numbers.pack()
+
+        self.entry_seat_numbers = tk.Entry(self)
+        self.entry_seat_numbers.pack()
+
+        self.btn_find_tickets = tk.Button(self, text="Find Tickets", command=self.find_tickets)
+        self.btn_find_tickets.pack()
+
+        self.lbl_booked_tickets = tk.Label(self, text="Booked Tickets:")
+        self.lbl_booked_tickets.pack()
+
+        self.lst_booked_tickets = tk.Listbox(self)
+        self.lst_booked_tickets.pack()
+
+        self.lbl_orders = tk.Label(self, text="Orders:")
+        self.lbl_orders.pack()
+
+        self.lst_orders = tk.Listbox(self, width=80, height=10)
+        self.lst_orders.pack()
+
+        self.btn_complete_order = tk.Button(self, text="Complete Order", command=self.complete_order)
+        self.btn_complete_order.pack()
+
+        # New widgets for adding trains
+        self.lbl_new_train_number = tk.Label(self, text="New Train Number:")
+        self.lbl_new_train_number.pack()
+
+        self.entry_new_train_number = tk.Entry(self)
+        self.entry_new_train_number.pack()
+
+        self.lbl_num_cars = tk.Label(self, text="Number of Cars:")
+        self.lbl_num_cars.pack()
+
+        self.entry_num_cars = tk.Entry(self)
+        self.entry_num_cars.pack()
+
+        self.lbl_seats_per_car = tk.Label(self, text="Seats per Car:")
+        self.lbl_seats_per_car.pack()
+
+        self.entry_seats_per_car = tk.Entry(self)
+        self.entry_seats_per_car.pack()
+
+        self.btn_create_train = tk.Button(self, text="Create Train", command=self.create_train)
+        self.btn_create_train.pack()
+
+    def check_logged_in(self):
+        if self.railway_system.logged_in_user:
+            self.btn_login.pack_forget()
+            self.btn_register.pack_forget()
+            self.btn_logout.place(x=450, y=40)
+            self.btn_profile.place(x=450, y=70)
+            self.lbl_logged_in_as.config(text=f"Logged in as: {self.railway_system.logged_in_user.username}")
+        else:
+            self.lbl_logged_in_as.config(text="")
+            self.btn_logout.place_forget()
+            self.btn_profile.place_forget()
+
+    def login(self):
+        username = self.entry_username.get()
+        password = self.entry_password.get()
+        for user in self.railway_system.users:
+            if user.username == username and user.password == password:
+                self.railway_system.logged_in_user = user
+                self.check_logged_in()
+                messagebox.showinfo("Login", "Login Successful")
+                self.entry_username.delete(0, tk.END)
+                self.entry_password.delete(0, tk.END)
+                self.lbl_username.pack_forget()
+                self.entry_username.pack_forget()
+                self.lbl_password.pack_forget()
+                self.entry_password.pack_forget()
+                return
+        messagebox.showerror("Login", "Invalid username or password")
+
+    def register(self):
+        username = self.entry_username.get()
+        password = self.entry_password.get()
+        user = self.railway_system.register_user(username, password)
+        self.railway_system.logged_in_user = user
+        self.check_logged_in()
+        messagebox.showinfo("Register", "Registration Successful")
+        self.entry_username.delete(0, tk.END)
+        self.entry_password.delete(0, tk.END)
+        self.lbl_username.pack_forget()
+        self.entry_username.pack_forget()
+        self.lbl_password.pack_forget()
+        self.entry_password.pack_forget()
+
+    def logout(self):
+        self.railway_system.logged_in_user = None
+        self.restart_program()
+
+    def find_tickets(self):
+        if not self.railway_system.logged_in_user:
+            messagebox.showerror("Error", "Please login first")
+            return
+
+        train_number = self.entry_train_number.get()
+        car = self.entry_car.get()
+        seat_numbers = self.entry_seat_numbers.get().split(",")
+        seat_numbers = [seat.strip() for seat in seat_numbers]
+
+        booked_tickets = self.railway_system.get_booked_tickets(train_number)
+        self.lst_booked_tickets.delete(0, tk.END)
+        for ticket in booked_tickets:
+            self.lst_booked_tickets.insert(tk.END, ticket)
+
+        order = self.railway_system.find_tickets(self.railway_system.logged_in_user, train_number, car, seat_numbers)
+        if order:
+            order_info = f"Order Date: {order.order_date.strftime('%Y-%m-%d %H:%M:%S')}, " \
+                         f"Tickets: {len(order.tickets)}, " \
+                         f"Train: {order.tickets[0].train_number}, " \
+                         f"Car: {order.tickets[0].car}, " \
+                         f"Seats: {', '.join([ticket.seat for ticket in order.tickets])}, " \
+                         f"Completed: {order.completed}"
+            self.lst_orders.insert(tk.END, order_info)
+            messagebox.showinfo("Find Tickets", "Order created successfully")
+        else:
+            messagebox.showerror("Find Tickets", "Unable to find tickets")
+
+    def complete_order(self):
+        if not self.railway_system.logged_in_user:
+            messagebox.showerror("Error", "Please login first")
+            return
+
+        if self.railway_system.logged_in_user.current_orders:
+            order = self.railway_system.logged_in_user.current_orders[0]
+            order.complete_order()
+            self.railway_system.logged_in_user.complete_order(order)
+            self.lst_orders.delete(0, tk.END)
+            messagebox.showinfo("Complete Order", "Order completed successfully")
+        else:
+            messagebox.showerror("Complete Order", "No current orders")
+
+    def create_train(self):
+        train_number = self.entry_new_train_number.get()
+        num_cars = int(self.entry_num_cars.get())
+        seats_per_car = int(self.entry_seats_per_car.get())
+        self.railway_system.create_train(train_number, num_cars, seats_per_car)
+        messagebox.showinfo("Create Train", f"Train {train_number} created with {num_cars} cars and {seats_per_car} seats per car")
+
+    def show_profile(self):
+        if not self.railway_system.logged_in_user:
+            messagebox.showerror("Error", "Please login first")
+            return
+
+        profile_window = tk.Toplevel(self)
+        profile_window.title("User Profile")
+
+        lbl_username = tk.Label(profile_window, text=f"Username: {self.railway_system.logged_in_user.username}")
+        lbl_username.pack()
+
+        lbl_order_history = tk.Label(profile_window, text="Order History:")
+        lbl_order_history.pack()
+
+        order_history_text = tk.Text(profile_window, height=10, width=80)
+        for order in self.railway_system.logged_in_user.order_history:
+            order_history_text.insert(tk.END, f"Order Date: {order.order_date.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            order_history_text.insert(tk.END, f"Tickets: {len(order.tickets)}\n")
+            order_history_text.insert(tk.END, f"Train: {order.tickets[0].train_number}\n")
+            order_history_text.insert(tk.END, f"Car: {order.tickets[0].car}\n")
+            order_history_text.insert(tk.END, f"Seats: {', '.join([ticket.seat for ticket in order.tickets])}\n")
+            order_history_text.insert(tk.END, f"Completed: {order.completed}\n\n")
+        order_history_text.pack()
+
+        btn_close = tk.Button(profile_window, text="Close", command=profile_window.destroy)
+        btn_close.pack()
+
+    def restart_program(self):
+        """Restart the current program."""
+        python = sys.executable
+        os.execl(python, python, *sys.argv)
+
+
+if __name__ == "__main__":
+    railway_system = RailwaySystem()
+
+    # Example data
+    railway_system.add_train("123", {"1": ["A1", "A2", "A3"], "2": ["B1", "B2", "B3"], "3": ["C1", "C2", "C3"]})
+
+    app = Application(railway_system)
+    app.mainloop()
